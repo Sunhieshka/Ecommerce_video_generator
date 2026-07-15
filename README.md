@@ -95,44 +95,5 @@ setup — [`.env.example`](.env.example) mirrors this list. Everything else
 `app/settings.py` supports (LLM/Seedance mode overrides, job/upload limits,
 data paths, host/port) has a working default and doesn't need to be set.
 
-## API Overview
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/jobs` | Upload a workbook + config, create a job |
-| `GET` | `/api/jobs/{job_id}` | Job status and counts |
-| `GET` | `/api/jobs/{job_id}/products` | Per-product status |
-| `POST` | `/api/jobs/{job_id}/retry` | Retry failed products |
-| `POST` | `/api/jobs/{job_id}/products/{product_id}/regenerate` | Regenerate one product with a custom prompt |
-| `GET` | `/api/jobs/{job_id}/download/{product_id}` | Download a rendered video |
 
-## Testing
-
-```bash
-pip install pytest
-pytest
-```
-
-> No `tests/` directory is currently checked in — `.pytest_cache` shows a prior
-> test suite covering the excel parser, prompt builder, job API, and Seedance
-> payload building. Restore or rewrite these before relying on `pytest` in CI.
-
-## Data & Storage
-
-`data/` holds the SQLite job database, uploaded workbooks, rendered videos, and
-Ark asset caches. It is runtime state, not source, and is gitignored — back it
-up separately if it needs to persist across deployments.
-
-## Security Notes
-
-- Real credentials belong in `.env` only; `.env.example` documents the required
-  keys with empty values. `.env` is gitignored — never commit it.
-- `venv/`, `frontend/node_modules/`, `frontend/dist/`, and `.tools/` are local
-  build/runtime artifacts and are excluded from version control — reinstall
-  them with the setup commands above rather than committing them.
-
-## Notes
-
-- `ecommerceskills.md` is mandatory for prompt generation and is used by the prompt builder.
-- The workbook is the only required user upload in the current flow.
-- Job history is stored in `data/app.db`.
