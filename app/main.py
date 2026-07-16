@@ -16,6 +16,22 @@ from app.services.job_runner import JobRunner
 from app.services.providers import build_providers
 from app.settings import Settings
 
+def _settings_from_request(request: Request) -> Settings:
+    import dataclasses
+    base: Settings = request.app.state.settings
+    ark_key = request.headers.get("x-ark-api-key")
+    bp_ak = request.headers.get("x-byteplus-ak")
+    bp_sk = request.headers.get("x-byteplus-sk")
+    if not ark_key or not bp_ak or not bp_sk:
+        raise HTTPException(status_code=401, detail="Missing credentials. Verify your API keys first.")
+    return dataclasses.replace(
+        base,
+        seedance_api_key=ark_key,
+        llm_api_key=ark_key,
+        byteplus_ak=bp_ak,
+        byteplus_sk=bp_sk,
+    )
+
 
 def parse_config(raw_config: str) -> VideoConfig:
     try:
@@ -39,8 +55,7 @@ def create_app(custom_settings: Settings | None = None) -> FastAPI:
     settings.ensure_directories()
     init_db(settings.db_path)
     connection = connect(settings.db_path)
-    llm_provider, seedance_provider = build_providers(settings)
-    job_runner = JobRunner(connection=connection, llm_provider=llm_provider, seedance_provider=seedance_provider)
+    job_runner = JobRunner(connection=connection)
 
     web_app = FastAPI(title="Ecommerce Video Generator", version="0.1.0")
     web_app.add_middleware(
@@ -62,13 +77,32 @@ def register_routes(app: FastAPI) -> None:
     async def home() -> RedirectResponse:
         return RedirectResponse(url="/docs", status_code=302)
 
+    @app.post("/api/auth/verify")
+    async def verify_credentials(request: Request) -> JSONResponse:
+        ark_key = request.headers.get("x-ark-api-key")
+        bp_ak = request.headers.get("x-byteplus-ak")
+        bp_sk = request.headers.get("x-byteplus-sk")
+        if not ark_key or not bp_ak or not bp_sk:
+            raise HTTPException(status_code=400, detail="All three credentials are required.")
+        try:
+            import asyncio
+            from byteplussdkarkruntime import Ark
+            client = Ark(api_key=ark_key)
+            await asyncio.to_thread(client.content_generation.tasks.list)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(k in msg for k in ("auth", "401", "forbidden", "invalid", "unauthorized", "permission", "apikey", "api_key")):
+                raise HTTPException(status_code=401, detail="Invalid ARK API key. Please check and try again.") from exc
+            raise HTTPException(status_code=502, detail="Could not reach BytePlus API. Check your network connection and try again.") from exc
+        return JSONResponse({"ok": True})
+
     @app.post("/api/jobs", response_model=CreateJobResponse)
     async def create_job(
         request: Request,
         file: UploadFile = File(...),
         config_json: str = Form(...),
     ) -> CreateJobResponse:
-        settings: Settings = request.app.state.settings
+        settings: Settings = _settings_from_request(request)
         config = parse_config(config_json)
         upload_path = settings.uploads_dir / file.filename
         with upload_path.open("wb") as output:
@@ -85,7 +119,8 @@ def register_routes(app: FastAPI) -> None:
             rows=parsed.rows,
             concurrency_limit=settings.max_concurrent_products,
         )
-        request.app.state.job_runner.schedule(job_id, config)
+        llm_provider, seedance_provider = build_providers(settings)
+        request.app.state.job_runner.schedule(job_id, config, llm_provider, seedance_provider)
 
         return CreateJobResponse(
             job_id=job_id,
@@ -111,6 +146,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/api/jobs/{job_id}/retry")
     async def retry_failed_products(request: Request, job_id: str) -> JSONResponse:
+        settings = _settings_from_request(request)
         repository = JobRepository(request.app.state.connection)
         job = repository.get_job(job_id)
         if job is None:
@@ -132,7 +168,8 @@ def register_routes(app: FastAPI) -> None:
             tone_override=job.tone_override,
             sound_required=job.sound_required,
         )
-        request.app.state.job_runner.schedule(job_id, config)
+        llm_provider, seedance_provider = build_providers(settings)
+        request.app.state.job_runner.schedule(job_id, config, llm_provider, seedance_provider)
         return JSONResponse({"message": "Retry started", "retried": len(failed)})
 
     @app.post("/api/jobs/{job_id}/products/{product_id}/regenerate")
@@ -142,6 +179,7 @@ def register_routes(app: FastAPI) -> None:
         product_id: str,
         payload: RegenerateProductRequest,
     ) -> JSONResponse:
+        settings = _settings_from_request(request)
         repository = JobRepository(request.app.state.connection)
         job = repository.get_job(job_id)
         if job is None:
@@ -162,11 +200,14 @@ def register_routes(app: FastAPI) -> None:
             tone_override=job.tone_override,
             sound_required=job.sound_required,
         )
+        llm_provider, seedance_provider = build_providers(settings)
         request.app.state.job_runner.schedule_product_regeneration(
             job_id=job_id,
             product_id=product_id,
             config=config,
             prompt=payload.prompt.strip(),
+            llm_provider=llm_provider,
+            seedance_provider=seedance_provider,
         )
         return JSONResponse({"message": "Product regeneration started", "product_id": product_id})
 

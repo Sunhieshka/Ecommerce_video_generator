@@ -9,38 +9,31 @@ from app.services.providers import LLMProvider, SeedanceProvider
 
 
 class JobRunner:
-    def __init__(
-        self,
-        connection: sqlite3.Connection,
-        llm_provider: LLMProvider,
-        seedance_provider: SeedanceProvider,
-    ) -> None:
+    def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
-        self.llm_provider = llm_provider
-        self.seedance_provider = seedance_provider
         self.active_jobs: set[str] = set()
         self.active_products: set[tuple[str, str]] = set()
 
     def is_running(self, job_id: str) -> bool:
         return job_id in self.active_jobs
 
-    def schedule(self, job_id: str, config: VideoConfig) -> None:
+    def schedule(self, job_id: str, config: VideoConfig, llm_provider: LLMProvider, seedance_provider: SeedanceProvider) -> None:
         if job_id in self.active_jobs:
             return
         self.active_jobs.add(job_id)
-        asyncio.create_task(self._run_job(job_id, config))
+        asyncio.create_task(self._run_job(job_id, config, llm_provider, seedance_provider))
 
     def is_product_running(self, job_id: str, product_id: str) -> bool:
         return (job_id, product_id) in self.active_products
 
-    def schedule_product_regeneration(self, job_id: str, product_id: str, config: VideoConfig, prompt: str) -> None:
+    def schedule_product_regeneration(self, job_id: str, product_id: str, config: VideoConfig, prompt: str, llm_provider: LLMProvider, seedance_provider: SeedanceProvider) -> None:
         key = (job_id, product_id)
         if key in self.active_products:
             return
         self.active_products.add(key)
-        asyncio.create_task(self._run_single_product(job_id, product_id, config, prompt_override=prompt))
+        asyncio.create_task(self._run_single_product(job_id, product_id, config, llm_provider, seedance_provider, prompt_override=prompt))
 
-    async def _run_job(self, job_id: str, config: VideoConfig) -> None:
+    async def _run_job(self, job_id: str, config: VideoConfig, llm_provider: LLMProvider, seedance_provider: SeedanceProvider) -> None:
         repository = JobRepository(self.connection)
         repository.update_job_status(job_id, "running")
         job = repository.get_job(job_id)
@@ -56,7 +49,7 @@ class JobRunner:
                 key = (job_id, product_id)
                 self.active_products.add(key)
                 try:
-                    await self._run_single_product(job_id, product_id, config)
+                    await self._run_single_product(job_id, product_id, config, llm_provider, seedance_provider)
                 finally:
                     self.active_products.discard(key)
 
@@ -69,6 +62,8 @@ class JobRunner:
         job_id: str,
         product_id: str,
         config: VideoConfig,
+        llm_provider: LLMProvider,
+        seedance_provider: SeedanceProvider,
         prompt_override: str | None = None,
     ) -> None:
         repository = JobRepository(self.connection)
@@ -100,14 +95,14 @@ class JobRunner:
             repository.update_job_status(job_id, "running")
             if prompt_override is None:
                 repository.update_product_status(product.id, "prompt_generating", started=True)
-                prompt = await self.llm_provider.generate_prompt(source_product, effective_config)
+                prompt = await llm_provider.generate_prompt(source_product, effective_config)
             else:
                 prompt = prompt_override
             repository.update_product_status(product.id, "prompt_ready", generated_prompt=prompt, error_message=None, started=True)
             repository.update_product_status(product.id, "submitting_to_seedance")
             repository.update_product_status(product.id, "generating_video")
 
-            result = await self.seedance_provider.generate_video(
+            result = await seedance_provider.generate_video(
                 product=product,
                 prompt=prompt,
                 config=effective_config,

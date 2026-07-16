@@ -8,10 +8,12 @@ import LoadingState from "@/components/LoadingState";
 import StatusPill from "@/components/StatusPill";
 import { regenerateProduct } from "@/lib/api";
 import type { ProductItem } from "@/lib/types";
+import { useCredentials } from "@/store/useCredentials";
 import { useJobStore } from "@/store/useJobStore";
 
 export default function ResultsPage() {
   const { jobId } = useParams();
+  const credentials = useCredentials((s) => s.credentials);
   const { job, products, loadJob, clear } = useJobStore();
   const totalEstimatedCost = useMemo(
     () => products.reduce((sum, product) => sum + (product.estimated_price_usd ?? 0), 0),
@@ -26,13 +28,13 @@ export default function ResultsPage() {
     if (!jobId) {
       return;
     }
-    loadJob(jobId);
-    const timer = window.setInterval(() => loadJob(jobId), 3000);
+    loadJob(jobId, credentials);
+    const timer = window.setInterval(() => loadJob(jobId, credentials), 3000);
     return () => {
       window.clearInterval(timer);
       clear();
     };
-  }, [clear, jobId, loadJob]);
+  }, [clear, jobId, loadJob, credentials]);
 
   return (
     <AppShell
@@ -74,7 +76,7 @@ export default function ResultsPage() {
               key={product.id}
               jobId={jobId!}
               product={product}
-              onRegenerated={() => loadJob(jobId!)}
+              onRegenerated={() => loadJob(jobId!, credentials)}
             />
           ))}
         </section>
@@ -114,6 +116,7 @@ function EditableResultCard({
   product: ProductItem;
   onRegenerated: () => Promise<void> | void;
 }) {
+  const credentials = useCredentials((s) => s.credentials);
   const [prompt, setPrompt] = useState(product.generated_prompt ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -131,7 +134,7 @@ function EditableResultCard({
     setSubmitting(true);
     setMessage(null);
     try {
-      await regenerateProduct(jobId, product.id, prompt.trim());
+      await regenerateProduct(jobId, product.id, prompt.trim(), credentials);
       await onRegenerated();
       setMessage("Regeneration started. This result card will refresh with the new output.");
     } catch (error) {

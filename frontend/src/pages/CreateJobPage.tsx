@@ -5,12 +5,14 @@ import { useNavigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { createJob } from "@/lib/api";
 import type { AspectRatio, Resolution, VideoConfig } from "@/lib/types";
+import { useCredentials } from "@/store/useCredentials";
 
 const RESOLUTION_OPTIONS: Resolution[] = ["480p", "720p", "1080p", "4k"];
 const ASPECT_RATIO_OPTIONS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 
 export default function CreateJobPage() {
   const navigate = useNavigate();
+  const credentials = useCredentials((s) => s.credentials);
   const [file, setFile] = useState<File | null>(null);
   const [config, setConfig] = useState<VideoConfig>({
     style: "cinematic",
@@ -39,7 +41,7 @@ export default function CreateJobPage() {
         referenceVideos: [],
         referenceVideoDurations: [],
         audioFiles: [],
-      });
+      }, credentials);
       navigate(`/jobs/${response.job_id}`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Failed to create job");

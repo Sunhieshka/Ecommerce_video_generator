@@ -7,10 +7,12 @@ import LoadingState from "@/components/LoadingState";
 import MetricCard from "@/components/MetricCard";
 import ProductTable from "@/components/ProductTable";
 import { retryFailed } from "@/lib/api";
+import { useCredentials } from "@/store/useCredentials";
 import { useJobStore } from "@/store/useJobStore";
 
 export default function JobMonitorPage() {
   const { jobId } = useParams();
+  const credentials = useCredentials((s) => s.credentials);
   const { job, products, error, loadJob, clear } = useJobStore();
   const [retrying, setRetrying] = useState(false);
 
@@ -18,13 +20,13 @@ export default function JobMonitorPage() {
     if (!jobId) {
       return;
     }
-    loadJob(jobId);
-    const timer = window.setInterval(() => loadJob(jobId), 2000);
+    loadJob(jobId, credentials);
+    const timer = window.setInterval(() => loadJob(jobId, credentials), 2000);
     return () => {
       window.clearInterval(timer);
       clear();
     };
-  }, [clear, jobId, loadJob]);
+  }, [clear, jobId, loadJob, credentials]);
 
   const runningCount = useMemo(() => {
     if (!job) {
@@ -38,8 +40,8 @@ export default function JobMonitorPage() {
       return;
     }
     setRetrying(true);
-    await retryFailed(jobId);
-    await loadJob(jobId);
+    await retryFailed(jobId, credentials);
+    await loadJob(jobId, credentials);
     setRetrying(false);
   }
 
