@@ -7,7 +7,7 @@ import { createJob } from "@/lib/api";
 import type { AspectRatio, Resolution, VideoConfig } from "@/lib/types";
 
 const RESOLUTION_OPTIONS: Resolution[] = ["480p", "720p", "1080p", "4k"];
-const ASPECT_RATIO_OPTIONS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:3", "3:4", "4:5"];
+const ASPECT_RATIO_OPTIONS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 
 export default function CreateJobPage() {
   const navigate = useNavigate();

@@ -1,0 +1,28 @@
+# Secrets — never in images
+.env
+
+# Python noise
+__pycache__/
+*.py[codz]
+.venv/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+
+# Local data (DB, uploads, generated videos)
+data/
+
+# Frontend source (backend image doesn't need it)
+frontend/
+
+# Docker files themselves
+Dockerfile.*
+docker-compose*.yml
+nginx.conf
+
+# Git
+.git/
+.gitignore
+
+# Keep cert.pem in context (needed by Dockerfile.backend)
+!cert.pem

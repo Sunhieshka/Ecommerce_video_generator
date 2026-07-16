@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Python / backend (not needed in frontend image)
+__pycache__/
+*.py[codz]
+.venv/
+app/
+main.py
+data/
+ecommerceskills.md
+
+# Frontend build artifacts (rebuilt inside container)
+frontend/node_modules/
+frontend/dist/
+
+# Git
+.git/
+.gitignore

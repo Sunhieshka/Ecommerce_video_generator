@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field
 
 
 Resolution = Literal["480p", "720p", "1080p", "4k"]
-AspectRatio = Literal["1:1", "4:3", "3:4", "4:5", "9:16", "16:9"]
+AspectRatio = Literal["1:1", "4:3", "3:4", "9:16", "16:9", "21:9"]
 
 
 class VideoConfig(BaseModel):
     style: str = Field(min_length=2, max_length=80)
-    duration_seconds: int = Field(ge=3, le=30)
+    duration_seconds: int = Field(ge=4, le=15)
     resolution: Resolution
     aspect_ratio: AspectRatio
     tone_override: str | None = Field(default=None, max_length=200)

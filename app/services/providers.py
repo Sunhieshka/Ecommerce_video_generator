@@ -148,9 +148,9 @@ class HTTPSeedanceProvider(SeedanceProvider):
             "1:1": "1:1",
             "4:3": "4:3",
             "3:4": "3:4",
-            "4:5": "4:5",
+            "21:9": "21:9",
         }
-        ratio = ratio_map.get(config.aspect_ratio, "adaptive")
+        ratio = ratio_map.get(config.aspect_ratio, "16:9")
         content_items = _build_seedance_content(
             prompt=prompt,
             reference_images=reference_images,
