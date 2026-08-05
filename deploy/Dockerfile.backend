@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -15,7 +16,7 @@ RUN pip install --no-cache-dir \
 
 COPY app/ ./app/
 COPY main.py .
-COPY ecommerceskills.md .
+COPY Doc/ ./Doc/
 
 ENV HOST=0.0.0.0
 ENV PORT=8000

@@ -19,7 +19,6 @@ class Settings:
     videos_dir: Path
     db_path: Path
     max_concurrent_products: int
-    llm_mode: str
     llm_api_base: str | None
     llm_api_key: str | None
     llm_model: str
@@ -56,7 +55,12 @@ class Settings:
         uploads_dir = data_dir / "uploads"
         videos_dir = data_dir / "videos"
         db_path = Path(os.getenv("APP_DB_PATH", data_dir / "app.db")).resolve()
-        llm_api_base = os.getenv("LLM_API_BASE") or os.getenv("ARK_API_BASE") or os.getenv("ARK_BASE_URL")
+        llm_api_base = (
+            os.getenv("LLM_API_BASE")
+            or os.getenv("ARK_API_BASE")
+            or os.getenv("ARK_BASE_URL")
+            or "https://ark.ap-southeast.bytepluses.com/api/v3"
+        )
         llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("ARK_API_KEY")
         ark_api_base = os.getenv("ARK_API_BASE") or os.getenv("ARK_BASE_URL")
         seedance_api_base = os.getenv("SEEDANCE_API_BASE")
@@ -79,15 +83,13 @@ class Settings:
             "ARK_ASSET_GROUP_DESCRIPTION",
             "Reusable human model image asset group for ecommerce video generation.",
         )
-        llm_mode = os.getenv("LLM_MODE") or ("live" if llm_api_key and llm_api_base else "mock")
-        seedance_mode = os.getenv("SEEDANCE_MODE") or ("live" if seedance_api_key else "mock")
+        seedance_mode = os.getenv("SEEDANCE_MODE", "live")
         return cls(
             data_dir=data_dir,
             uploads_dir=uploads_dir,
             videos_dir=videos_dir,
             db_path=db_path,
             max_concurrent_products=int(os.getenv("MAX_CONCURRENT_PRODUCTS", "5")),
-            llm_mode=llm_mode,
             llm_api_base=llm_api_base,
             llm_api_key=llm_api_key,
             llm_model=os.getenv("LLM_MODEL", "seed-2-0-pro-260328"),

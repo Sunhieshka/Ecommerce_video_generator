@@ -16,13 +16,9 @@ data/
 frontend/
 
 # Docker files themselves
-Dockerfile.*
-docker-compose*.yml
-nginx.conf
+deploy/Dockerfile.*
+deploy/docker-compose*.yml
 
 # Git
 .git/
 .gitignore
-
-# Keep cert.pem in context (needed by Dockerfile.backend)
-!cert.pem

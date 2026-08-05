@@ -1,9 +1,15 @@
 # Project-specific
 cert.pem
+bytepluses_ca_chain.pem
 *.xlsx
 *.xls
+*.bak
+*_embedded/
+*.pptx
+.DS_Store
 data/
 .claude/
+ecommerce_skills/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

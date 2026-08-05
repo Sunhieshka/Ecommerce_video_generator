@@ -1,8 +1,9 @@
 services:
   backend:
+    image: alokvernekar/evg-backend:latest
     build:
-      context: .
-      dockerfile: Dockerfile.backend
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
     env_file: .env
     volumes:
       - app_data:/app/data
@@ -11,9 +12,10 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: alokvernekar/evg-frontend:latest
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
     ports:
       - "80:80"
     depends_on:

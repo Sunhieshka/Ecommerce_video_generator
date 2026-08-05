@@ -1,58 +1,72 @@
 # Ecommerce Video Generator
 
-Turns a product spreadsheet (SKU, description, reference images) into AI-generated
-product videos. A FastAPI backend parses the workbook, builds a video-generation
-prompt per product, submits it to a Seedance-compatible video model, and tracks
-job/product status until the rendered videos are ready to download. A React
-frontend drives the whole flow: upload, monitor, review, and retry.
+Turns a product spreadsheet (SKU, description, reference images, per-row video style) into AI-generated product videos via BytePlus Seedance 2.0. A FastAPI backend parses the workbook, builds a style-specific prompt per product, submits it to Seedance, and tracks job state in SQLite. A React frontend drives upload, monitoring, review, and retry.
 
 ## Architecture
 
 ```
-React (Vite)  --->  FastAPI backend  --->  LLM provider (prompt generation)
-                         |                 Seedance provider (video generation)
+React (Vite)  --->  FastAPI backend  --->  BytePlus Ark LLM (prompt generation)
+                         |                 BytePlus Seedance 2.0 (video generation)
                          |                 BytePlus TOS (asset storage)
                          v
                     SQLite (job/product state)
-                    Local filesystem (uploads, rendered videos, asset caches)
 ```
 
-- `app/`: FastAPI backend and video-generation pipeline — the only server-side layer.
-- `frontend/`: React + Vite single-page app — the only web UI.
+Credentials are passed per-request via headers (API gate) — the backend never persists API keys. Users enter their Ark API key + BytePlus AK/SK in the browser; the frontend stores them in `sessionStorage` and attaches them as headers on every API call.
 
 ## Repository Layout
 
 ```
-app/
-  main.py                 FastAPI app factory and API routes
-  db.py                   SQLite schema and migrations
-  repository.py           Persistence helpers (jobs, products, assets)
-  schemas.py               Shared Pydantic models
-  settings.py             Env-driven configuration (reads .env only)
+app/                        FastAPI backend
+  main.py                   App factory + API routes
+  db.py                     SQLite schema + migrations
+  repository.py             Persistence helpers
+  schemas.py                Pydantic models
+  settings.py               Env-driven configuration
   services/
-    excel_parser.py       Workbook -> ProductRow parsing
-    prompt_builder.py     Product data -> video-generation prompt
-    job_runner.py         Async job/product orchestration and concurrency control
-    providers.py          LLM + Seedance provider clients (live/mock)
-    asset_library.py      Ark reusable asset group/upload handling
-frontend/
-  src/pages/              Route-level pages (create job, monitor, results)
-  src/components/         Shared UI components
-  src/store/              Zustand client state
-  src/lib/                API client and shared types
-data/                     Runtime SQLite DB, uploads, rendered videos, asset caches (gitignored)
-ecommerceskills.md         Prompt-writing rules consumed by the prompt builder
-main.py                   Root launcher for the backend (uvicorn)
-requirements.txt          Backend dependencies
+    excel_parser.py         Workbook parsing + embedded image extraction
+    prompt_builder.py       Deterministic style-specific prompt builders
+    providers.py            LLM + Seedance provider adapters (live only)
+    job_runner.py           Async job orchestrator (FSM + concurrency)
+    asset_library.py        TOS upload + Ark asset registration
+frontend/                   React + Vite + Tailwind + Zustand SPA
+  src/pages/                Credentials, CreateJob, JobMonitor, Results
+  src/components/           Shared UI components
+  src/store/                Zustand state
+  src/lib/                  API client + types
+deploy/                     Docker deployment
+  Dockerfile.backend        Python 3.12-slim backend image
+  Dockerfile.frontend       Multi-stage Node → nginx frontend image
+  docker-compose.yml        Backend + frontend + named volume
+  nginx.conf                SPA fallback + /api reverse proxy
+Doc/                        Reference docs
+  ecommerceskills.md        Prompt-writing style guide (loaded by prompt_builder)
+  UGC_videos.md             UGC skill system prompt (loaded by providers)
+  Seedance-2.0 Audio Guidelines.md  Audio policy reference
+  Vg_spec.md                BytePlus Video Generation API spec
+main.py                     Root launcher (uvicorn)
+requirements.txt           Backend dependencies
 ```
 
-## Prerequisites
+## Video Styles
 
-- Python 3.9+
-- Node.js 18+ and npm
-- Credentials for the LLM provider, Seedance provider, and BytePlus TOS (or run in `mock` mode without them)
+Each workbook row specifies a video style. The backend routes to a dedicated prompt builder per style:
 
-## Setup
+| Style | Builder | Description |
+|---|---|---|
+| `UGC` | `_build_ugc_prompt` | Handheld selfie, mandatory spoken audio, LLM-authored dialogue |
+| `UGC Skill` | LLM-authored via `UGC_videos.md` | Fully LLM-authored sectioned prompt, fixed camera, named performer |
+| `Cinematic` | `_build_cinematic_prompt` | Hero shot, slow push-in, no people |
+| `CGI Showcase` | `_build_cgi_showcase_prompt` | Photoreal CG, abstract void, weightless motion-control |
+| `Review` | `_build_review_prompt` | Single-take handheld phone review, lip-synced dialogue |
+| `Hook` | `_build_hook_prompt` | Opening beat only, 4 hook archetypes |
+| `Lifestyle Scenes` | `_build_lifestyle_scenes_prompt` | Same product across 3 environments |
+| `Presenter` | `_build_presenter_prompt` | Talking-head, locked-off camera, verbatim script |
+| *other* | Generic fallback | Standard hook → mid → closing structure |
+
+All prompts are sanitized against the Seedance-2.0 Audio Guidelines before submit.
+
+## Local Development
 
 ### Backend
 
@@ -60,7 +74,6 @@ requirements.txt          Backend dependencies
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in the values described in Configuration below
 python3 main.py
 ```
 
@@ -71,29 +84,35 @@ Backend runs at `http://127.0.0.1:8000`.
 ```bash
 cd frontend
 npm install
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
-Frontend runs at `http://127.0.0.1:5173` and proxies API requests to the FastAPI backend.
+Frontend runs at `http://127.0.0.1:5173` and proxies `/api` to the backend.
 
-## Configuration
+## Deployment
 
-**These credentials are set only through `.env`, read once at process
-startup.** There is no in-app way to view or change them — edit `.env` and
-restart the backend for changes to take effect.
+### Docker
 
-| Variable | Purpose |
-|---|---|
-| `ARK_API_KEY` | Auth for both the LLM (prompt generation) and Seedance (video generation) providers. |
-| `ARK_PROJECT` | Ark project name. |
-| `ARK_MODEL_ENDPOINT` | Ark model endpoint used for video generation. |
-| `BYTEPLUS_AK`, `BYTEPLUS_SK` | BytePlus access key / secret key. |
-| `TOS_REGION`, `TOS_BUCKET_NAME` | BytePlus TOS object storage location for reference/generated assets. |
+```bash
+docker compose -f deploy/docker-compose.yml up -d
+```
 
-These are the only environment variables this app actually reads for provider
-setup — [`.env.example`](.env.example) mirrors this list. Everything else
-`app/settings.py` supports (LLM/Seedance mode overrides, job/upload limits,
-data paths, host/port) has a working default and doesn't need to be set.
+Or build and push manually:
 
+```bash
+docker buildx build --platform linux/amd64 -f deploy/Dockerfile.backend -t <user>/evg-backend:latest --push .
+docker buildx build --platform linux/amd64 -f deploy/Dockerfile.frontend -t <user>/evg-frontend:latest --push .
+```
 
+### Environment
 
+The `.env` file on the server only needs:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SEEDANCE_MODE` | `live` | `live` or `prompt_only` (dry-run, no API calls) |
+| `ARK_PROJECT` | `default` | Ark project name |
+| `TOS_REGION` | — | BytePlus TOS region |
+| `TOS_BUCKET_NAME` | — | BytePlus TOS bucket |
+
+`ARK_API_KEY`, `BYTEPLUS_AK`, and `BYTEPLUS_SK` are **not** in `.env` — users provide them per-request via the browser.

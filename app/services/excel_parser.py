@@ -186,14 +186,110 @@ def _extract_embedded_images_by_cell(file_path: Path) -> dict[tuple[int, int], l
     return cell_map
 
 
+# Spec-sheet header words that should NOT be used as a product name.
+# When the description opens with "Style:", "Brand:", "Fabric:", etc. we're
+# looking at a spec sheet, not a name. Skip that colon-pattern and use a
+# category-word extraction instead.
+_SPEC_HEADER_WORDS = frozenset({
+    "style", "brand", "brand & design", "brand and design", "design",
+    "fabric", "material", "comfort", "features", "feature",
+    "specifications", "specs", "spec", "application", "usage",
+    "results", "benefits", "quality", "premium quality",
+    "water resistance", "size", "dimensions", "weight", "capacity",
+    "color", "colour", "finish", "type", "category", "model",
+    "warranty", "care", "care instructions", "package contents",
+    "in the box", "what's in the box",
+})
+
+# Category words we can extract when nothing else works — used to build
+# a short generic name like "the daypack" or "the watch" instead of a
+# random text prefix.
+_CATEGORY_WORDS = (
+    # apparel
+    "jacket", "coat", "hoodie", "sweater", "shirt", "tees", "tee", "t-shirt",
+    "top", "blouse", "dress", "skirt", "pants", "trousers", "jeans",
+    "shorts", "leggings", "socks", "underwear", "sleeve", "polo",
+    # footwear
+    "shoes", "sneakers", "loafers", "boots", "sandals", "heels",
+    # bags
+    "bag", "backpack", "daypack", "handbag", "purse", "tote", "wallet",
+    # accessories
+    "watch", "sunglasses", "glasses", "belt", "hat", "cap", "scarf",
+    "ring", "necklace", "bracelet", "earrings",
+    # electronics
+    "headphones", "earbuds", "speaker", "phone", "laptop", "tablet",
+    "camera", "charger", "cable", "keyboard", "mouse", "monitor",
+    # home
+    "bottle", "mug", "cup", "kettle", "blender", "toaster", "lamp",
+    # beauty
+    "lipstick", "lip colour", "lip color", "foundation", "mascara",
+    "moisturiser", "moisturizer", "serum", "cream", "lotion",
+    # tools
+    "drill", "screwdriver", "hammer", "saw", "wrench",
+)
+
+
+def _derive_product_name(description: str) -> str:
+    """Extract a short product name from the description.
+
+    Priority order:
+    1. If description opens with "Name: rest" AND "Name" isn't a spec-sheet
+       header word (Style, Brand, Fabric, etc.), use it.
+    2. If description opens with a short "Name. rest" sentence (≤ 6 words),
+       use it.
+    3. Look for a recognizable product category word anywhere in the first
+       200 chars and return "the <category>".
+    4. Give up and return an empty string — the caller falls back to the SKU.
+    """
+    text = description.strip()
+
+    # Category-word extraction (tried FIRST — a real product category word
+    # anywhere in the first 200 chars beats any prefix heuristic).
+    # Preserves multi-word matches (e.g. "lip colour").
+    prefix = text[:200].lower()
+    for category in _CATEGORY_WORDS:
+        # Word-boundary match to avoid "hatchet" matching "hat", etc.
+        pattern = re.compile(rf"\b{re.escape(category)}\b")
+        if pattern.search(prefix):
+            return f"the {category}"
+
+    # Pattern: "Name: detailed description" — but only if the "Name" is not
+    # a known spec-sheet header word.
+    colon_idx = text.find(":")
+    if 0 < colon_idx < 80:
+        candidate = text[:colon_idx].strip().rstrip(",.;")
+        candidate_lower = candidate.lower()
+        if candidate_lower not in _SPEC_HEADER_WORDS:
+            words = candidate.split()
+            if 1 <= len(words) <= 8:
+                return candidate.title() if candidate.isupper() else candidate
+
+    # Pattern: "Name. rest" — take the sentence before the first period if ≤ 6 words
+    period_idx = text.find(".")
+    if 0 < period_idx < 80:
+        candidate = text[:period_idx].strip().rstrip(",.;")
+        words = candidate.split()
+        if 1 <= len(words) <= 6:
+            return candidate.title() if candidate.isupper() else candidate
+
+    # Give up cleanly — return empty and let the caller default to SKU.
+    return ""
+
+
 def parse_excel(file_path: Path) -> ParsedWorkbook:
-    dataframe = pd.read_excel(file_path)
-    normalized_columns = {_normalize_name(column): column for column in dataframe.columns}
+    import openpyxl
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws_obj = wb.active
+
+    # Read headers from row 1
+    header_row = [cell.value for cell in next(ws_obj.iter_rows(min_row=1, max_row=1))]
+    columns = [str(h) if h is not None else "" for h in header_row]
+    normalized_columns = {_normalize_name(col): col for col in columns if col}
     resolved_columns: dict[str, str] = {}
     multi_image_columns = _find_product_image_columns(normalized_columns)
     human_model_columns = _find_human_model_columns(normalized_columns)
     embedded_images_by_cell = _extract_embedded_images_by_cell(file_path)
-    column_positions = {str(column): position for position, column in enumerate(dataframe.columns, start=1)}
+    column_positions = {col: pos for pos, col in enumerate(columns, start=1)}
 
     for target, aliases in COLUMN_ALIASES.items():
         for alias in aliases:
@@ -208,32 +304,36 @@ def parse_excel(file_path: Path) -> ParsedWorkbook:
         readable = ", ".join(missing)
         raise ValueError(f"Missing required columns: {readable}")
 
+    def cell_value(row_cells: dict[str, object], col_name: str) -> object:
+        return row_cells.get(col_name)
+
     warnings: list[str] = []
     rows: list[ProductRow] = []
 
-    for index, row in dataframe.iterrows():
-        row_number = index + 2
-        product_name = _clean_text(row.get(resolved_columns["product_name"], "")) if "product_name" in resolved_columns else ""
-        description = _clean_text(row.get(resolved_columns["product_description"], ""))
-        video_style = _clean_text(row.get(resolved_columns["video_style"], "")) if "video_style" in resolved_columns else ""
-        duration_seconds = _parse_duration_seconds(row.get(resolved_columns["duration_seconds"])) if "duration_seconds" in resolved_columns else None
+    for row_idx, row in enumerate(ws_obj.iter_rows(min_row=2, values_only=True), start=2):
+        row_number = row_idx
+        row_cells = {columns[i]: row[i] for i in range(len(columns)) if i < len(row)}
+
+        product_name = _clean_text(cell_value(row_cells, resolved_columns["product_name"])) if "product_name" in resolved_columns else ""
+        description = _clean_text(cell_value(row_cells, resolved_columns["product_description"]))
+        video_style = _clean_text(cell_value(row_cells, resolved_columns["video_style"])) if "video_style" in resolved_columns else ""
+        duration_seconds = _parse_duration_seconds(cell_value(row_cells, resolved_columns["duration_seconds"])) if "duration_seconds" in resolved_columns else None
+
         product_images: list[str] = []
         if "product_image_refs" in resolved_columns:
-            product_images.extend(_split_refs(row.get(resolved_columns["product_image_refs"])))
+            product_images.extend(_split_refs(cell_value(row_cells, resolved_columns["product_image_refs"])))
         for column_name in multi_image_columns:
-            value = _clean_text(row.get(column_name, ""))
+            value = _clean_text(cell_value(row_cells, column_name))
             if value:
                 product_images.append(value)
             product_images.extend(embedded_images_by_cell.get((row_number, column_positions[column_name]), []))
-
-        # Preserve order but avoid duplicate references when a sheet mixes cell text and embedded media.
         product_images = list(dict.fromkeys(product_images))
 
         model_images: list[str] = []
         if "human_model_image_refs" in resolved_columns:
-            model_images.extend(_split_refs(row.get(resolved_columns["human_model_image_refs"])))
+            model_images.extend(_split_refs(cell_value(row_cells, resolved_columns["human_model_image_refs"])))
         for column_name in human_model_columns:
-            value = _clean_text(row.get(column_name, ""))
+            value = _clean_text(cell_value(row_cells, column_name))
             if value:
                 model_images.extend(_split_refs(value))
             if column_name in column_positions:
@@ -241,8 +341,12 @@ def parse_excel(file_path: Path) -> ParsedWorkbook:
         model_images = list(dict.fromkeys(model_images))
 
         sku_column = resolved_columns.get("sku")
-        sku_value = _clean_text(row.get(sku_column, "")) if sku_column else ""
+        sku_value = _clean_text(cell_value(row_cells, sku_column)) if sku_column else ""
         sku = sku_value or f"ROW-{row_number}"
+
+        # Derive product name from description if no dedicated name column
+        if not product_name and description:
+            product_name = _derive_product_name(description)
         product_name = product_name or sku
 
         if not description or not product_images:
@@ -265,7 +369,7 @@ def parse_excel(file_path: Path) -> ParsedWorkbook:
     if not rows:
         raise ValueError("The workbook did not contain any valid product rows.")
 
-    return ParsedWorkbook(rows=rows, warnings=warnings, columns=[str(column) for column in dataframe.columns])
+    return ParsedWorkbook(rows=rows, warnings=warnings, columns=columns)
 
 
 def _parse_duration_seconds(value: object) -> int | None:
@@ -276,10 +380,13 @@ def _parse_duration_seconds(value: object) -> int | None:
     text = str(value).strip().lower()
     if not text:
         return None
-    match = re.search(r"(\d+(?:\.\d+)?)", text)
+    match = re.search(r"(-?\d+(?:\.\d+)?)", text)
     if not match:
         return None
     seconds = round(float(match.group(1)))
-    if 3 <= seconds <= 30:
+    # -1 tells Seedance to auto-select the appropriate video length within its valid range.
+    if seconds == -1:
+        return -1
+    if 4 <= seconds <= 15:
         return seconds
     return None
